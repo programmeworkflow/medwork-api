@@ -205,10 +205,7 @@ async function createCustomer({ companyName, cnpj, email }) {
     email:     email ?? undefined,
     ativo:     true,
     tipo_pessoa: 'Jurídica',
-    cliente:   true,
-    fornecedor: false,
-    transportadora: false,
-    perfis:    ['Cliente'],
+    perfis:    { cliente: true, fornecedor: false, transportadora: false },
   });
 }
 
