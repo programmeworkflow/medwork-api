@@ -86,10 +86,12 @@ router.post('/test-create', async (req, res) => {
     const axios = require('axios');
     const token = await getAccessToken();
     const endpoint = req.body._endpoint || '/v1/pessoas';
+    const baseUrl = req.body._baseUrl || 'https://api-v2.contaazul.com';
     const payload = { ...req.body };
     delete payload._endpoint;
-    console.log('[CA DEBUG] POST', endpoint, JSON.stringify(payload));
-    const response = await axios.post(`https://api-v2.contaazul.com${endpoint}`, payload, {
+    delete payload._baseUrl;
+    console.log('[CA DEBUG] POST', baseUrl + endpoint, JSON.stringify(payload));
+    const response = await axios.post(`${baseUrl}${endpoint}`, payload, {
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' },
       timeout: 15000,
     });
