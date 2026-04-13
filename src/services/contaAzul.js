@@ -147,7 +147,7 @@ async function apiCall(method, endpoint, data = null, contractId = null) {
       data: data ?? undefined,
       headers: {
         Authorization:  `Bearer ${token}`,
-        'Content-Type': 'application/json',
+        'Content-Type': 'application/json; charset=utf-8',
       },
       timeout: 15000,
     });
@@ -205,7 +205,7 @@ async function createCustomer({ companyName, cnpj, email }) {
     documento: doc,
     email:     email || '',
     ativo:     true,
-    tipo_pessoa: 'JURIDICA',
+    tipo_pessoa: 'Jur\u00eddica',
     perfis:    [{ tipo_perfil: 'Cliente' }],
   };
   await logEvent('info', 'contaazul', `Creating pessoa payload: ${JSON.stringify(payload)}`);
