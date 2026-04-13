@@ -251,28 +251,17 @@ async function createContract(data, customerId, contractId) {
     numero = numRes || 1;
   } catch { /* use default */ }
 
-  // Find or create a service/product item in CA
+  // Find first active service in CA to use as item reference
   let itemId = null;
   try {
-    const items = await apiCall('get', '/v1/servicos?nome=Programas e Laudos');
-    const list = items?.items || items?.itens || (Array.isArray(items) ? items : []);
-    if (list.length) {
-      itemId = list[0].id;
+    const items = await apiCall('get', '/v1/servicos?limit=50&status=ATIVO');
+    const list = items?.itens || items?.items || (Array.isArray(items) ? items : []);
+    const active = list.find(s => s.status === 'ATIVO');
+    if (active) {
+      itemId = active.id;
+      await logEvent('info', 'contaazul', `Using existing service: ${active.descricao} (${itemId})`);
     }
   } catch { /* ignore */ }
-
-  if (!itemId) {
-    try {
-      const newItem = await apiCall('post', '/v1/servicos', {
-        nome: 'Programas e Laudos Técnicos',
-        valor: grossValue,
-      });
-      itemId = newItem.id;
-      await logEvent('info', 'contaazul', `Service created in CA: ${itemId}`);
-    } catch (e) {
-      await logEvent('warn', 'contaazul', `Failed to create service: ${e.response?.data?.error || e.message}`);
-    }
-  }
 
   const itemEntry = {
     quantidade: 1,
