@@ -205,7 +205,7 @@ async function createCustomer({ companyName, cnpj, email }) {
     documento: doc,
     email:     email || '',
     ativo:     true,
-    tipo_pessoa: 'Juridica',
+    tipo_pessoa: 'JURIDICA',
     perfis:    [{ tipo_perfil: 'Cliente' }],
   };
   await logEvent('info', 'contaazul', `Creating pessoa payload: ${JSON.stringify(payload)}`);
