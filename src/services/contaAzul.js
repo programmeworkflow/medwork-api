@@ -199,14 +199,17 @@ async function findCustomer(cnpj, email) {
 
 // ─── Customer create — /v1/pessoas ────────────────────
 async function createCustomer({ companyName, cnpj, email }) {
-  return apiCall('post', '/v1/pessoas', {
+  const doc = cnpj ? cnpj.replace(/\D/g, '') : '';
+  const payload = {
     nome:      companyName,
-    documento: cnpj ? cnpj.replace(/\D/g, '') : undefined,
-    email:     email ?? undefined,
+    documento: doc,
+    email:     email || '',
     ativo:     true,
-    tipo_pessoa: 'Jurídica',
+    tipo_pessoa: 'Juridica',
     perfis:    [{ tipo_perfil: 'Cliente' }],
-  });
+  };
+  await logEvent('info', 'contaazul', `Creating pessoa payload: ${JSON.stringify(payload)}`);
+  return apiCall('post', '/v1/pessoas', payload);
 }
 
 async function ensureCustomer(data) {
@@ -275,10 +278,9 @@ async function createContract(data, customerId, contractId) {
     quantidade: 1,
     descricao: description,
     valor: grossValue,
-    valor_custo: grossValue,
-    desconto: discount > 0 ? discount : undefined,
   };
   if (itemId) itemEntry.id_item = itemId;
+  if (discount > 0) itemEntry.desconto = discount;
 
   const payload = {
     id_cliente: customerId,
@@ -309,10 +311,8 @@ async function createContract(data, customerId, contractId) {
 async function processContaAzul(data, contractId) {
   await logEvent('info', 'contaazul', `Starting integration: ${data.companyName}`, contractId);
   const customer = await ensureCustomer(data);
-  // Try legacy UUID first, then regular ID
-  const clienteId = customer._legacyId || customer.id;
-  await logEvent('info', 'contaazul', `Using client ID: ${clienteId} (legacy: ${!!customer._legacyId})`, contractId);
-  const contract = await createContract(data, clienteId, contractId);
+  await logEvent('info', 'contaazul', `Using client ID: ${customer.id}`, contractId);
+  const contract = await createContract(data, customer.id, contractId);
   await logEvent('info', 'contaazul',
     `Integration complete — contract ID: ${contract.id ?? contract.uuid ?? 'unknown'}`,
     contractId
