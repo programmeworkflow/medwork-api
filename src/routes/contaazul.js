@@ -79,16 +79,18 @@ router.get('/test-get', async (req, res) => {
   }
 });
 
-// DEBUG: test creating pessoa with different formats
+// DEBUG: test POST to any CA endpoint
 router.post('/test-create', async (req, res) => {
   try {
     const { getAccessToken } = require('../services/contaAzul');
     const axios = require('axios');
     const token = await getAccessToken();
-    const payload = req.body;
-    console.log('[CA DEBUG] Payload:', JSON.stringify(payload));
-    const response = await axios.post('https://api-v2.contaazul.com/v1/pessoas', payload, {
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    const endpoint = req.body._endpoint || '/v1/pessoas';
+    const payload = { ...req.body };
+    delete payload._endpoint;
+    console.log('[CA DEBUG] POST', endpoint, JSON.stringify(payload));
+    const response = await axios.post(`https://api-v2.contaazul.com${endpoint}`, payload, {
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' },
       timeout: 15000,
     });
     res.json({ success: true, data: response.data });
