@@ -199,10 +199,14 @@ async function findCustomer(cnpj, email) {
 
 // ─── Customer create — /v1/pessoas ────────────────────
 async function createCustomer({ companyName, cnpj, email }) {
-  const doc = cnpj ? cnpj.replace(/\D/g, '') : '';
+  // Format CNPJ with dots/slash/dash - CA requires formatted document
+  const raw = cnpj ? cnpj.replace(/\D/g, '') : '';
+  const formattedDoc = raw.length === 14
+    ? `${raw.slice(0,2)}.${raw.slice(2,5)}.${raw.slice(5,8)}/${raw.slice(8,12)}-${raw.slice(12)}`
+    : raw;
   const payload = {
     nome:      companyName,
-    documento: doc,
+    documento: formattedDoc,
     email:     email || '',
     ativo:     true,
     tipo_pessoa: 'Jur\u00eddica',
