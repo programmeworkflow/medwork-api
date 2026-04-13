@@ -62,4 +62,22 @@ router.get('/status', async (_req, res) => {
   res.json({ authorized });
 });
 
+// DEBUG: test creating pessoa with different formats
+router.post('/test-create', async (req, res) => {
+  try {
+    const { getAccessToken } = require('../services/contaAzul');
+    const axios = require('axios');
+    const token = await getAccessToken();
+    const payload = req.body;
+    console.log('[CA DEBUG] Payload:', JSON.stringify(payload));
+    const response = await axios.post('https://api-v2.contaazul.com/v1/pessoas', payload, {
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      timeout: 15000,
+    });
+    res.json({ success: true, data: response.data });
+  } catch (err) {
+    res.json({ success: false, status: err.response?.status, error: err.response?.data });
+  }
+});
+
 module.exports = router;
