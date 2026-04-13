@@ -216,6 +216,15 @@ async function ensureCustomer(data) {
     customer = await createCustomer(data);
     await logEvent('info', 'contaazul', `Customer created: ${customer.id} (${customer.nome})`);
   }
+  // The contract API may need the legacy ID instead of the UUID
+  // Check pessoas_legado for the Cliente profile ID
+  if (customer.pessoas_legado?.length) {
+    const clienteLegado = customer.pessoas_legado.find(p => p.perfil === 'Cliente');
+    if (clienteLegado) {
+      customer._legacyId = clienteLegado.uuid || clienteLegado.id;
+      await logEvent('info', 'contaazul', `Legacy client ID: ${customer._legacyId}`);
+    }
+  }
   return customer;
 }
 
@@ -300,7 +309,10 @@ async function createContract(data, customerId, contractId) {
 async function processContaAzul(data, contractId) {
   await logEvent('info', 'contaazul', `Starting integration: ${data.companyName}`, contractId);
   const customer = await ensureCustomer(data);
-  const contract = await createContract(data, customer.id, contractId);
+  // Try legacy UUID first, then regular ID
+  const clienteId = customer._legacyId || customer.id;
+  await logEvent('info', 'contaazul', `Using client ID: ${clienteId} (legacy: ${!!customer._legacyId})`, contractId);
+  const contract = await createContract(data, clienteId, contractId);
   await logEvent('info', 'contaazul',
     `Integration complete — contract ID: ${contract.id ?? contract.uuid ?? 'unknown'}`,
     contractId
