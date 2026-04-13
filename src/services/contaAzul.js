@@ -239,6 +239,38 @@ async function createContract(data, customerId, contractId) {
     numero = numRes || 1;
   } catch { /* use default */ }
 
+  // Find or create a service/product item in CA
+  let itemId = null;
+  try {
+    const items = await apiCall('get', '/v1/servicos?nome=Programas e Laudos');
+    const list = items?.items || items?.itens || (Array.isArray(items) ? items : []);
+    if (list.length) {
+      itemId = list[0].id;
+    }
+  } catch { /* ignore */ }
+
+  if (!itemId) {
+    try {
+      const newItem = await apiCall('post', '/v1/servicos', {
+        nome: 'Programas e Laudos Técnicos',
+        valor: grossValue,
+      });
+      itemId = newItem.id;
+      await logEvent('info', 'contaazul', `Service created in CA: ${itemId}`);
+    } catch (e) {
+      await logEvent('warn', 'contaazul', `Failed to create service: ${e.response?.data?.error || e.message}`);
+    }
+  }
+
+  const itemEntry = {
+    quantidade: 1,
+    descricao: description,
+    valor: grossValue,
+    valor_custo: grossValue,
+    desconto: discount > 0 ? discount : undefined,
+  };
+  if (itemId) itemEntry.id_item = itemId;
+
   const payload = {
     id_cliente: customerId,
     data_emissao: startDate,
@@ -257,13 +289,7 @@ async function createContract(data, customerId, contractId) {
       dia_vencimento: 10,
       primeira_data_vencimento: `${year}-${monthNum}-10`,
     },
-    itens: [{
-      quantidade: 1,
-      descricao: description,
-      valor: grossValue,
-      valor_custo: grossValue,
-      desconto: discount > 0 ? discount : undefined,
-    }],
+    itens: [itemEntry],
   };
 
   await logEvent('info', 'contaazul', `Creating contract #${numero} for customer ${customerId}`, contractId);
