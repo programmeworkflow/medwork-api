@@ -275,6 +275,7 @@ async function createContract(data, customerId, contractId) {
     id_cliente: customerId,
     data_emissao: startDate,
     observacoes: `${data.companyName} — ${description}`,
+    numero,
     termos: {
       tipo_frequencia: 'MENSAL',
       tipo_expiracao: 'DATA',
@@ -282,7 +283,6 @@ async function createContract(data, customerId, contractId) {
       data_fim: endDate,
       intervalo_frequencia: 1,
       dia_emissao_venda: 1,
-      numero,
     },
     condicao_pagamento: {
       tipo_pagamento: 'BOLETO_BANCARIO',
@@ -293,6 +293,7 @@ async function createContract(data, customerId, contractId) {
   };
 
   await logEvent('info', 'contaazul', `Creating contract #${numero} for customer ${customerId}`, contractId);
+  await logEvent('info', 'contaazul', `Contract payload: ${JSON.stringify(payload)}`, contractId);
   return apiCall('post', '/v1/contratos', payload, contractId);
 }
 
