@@ -137,8 +137,9 @@ async function isAuthorized() {
 }
 
 // ─── Generic authenticated request ────────────────────────────
-async function apiCall(method, endpoint, data = null, contractId = null) {
+async function apiCall(method, endpoint, data = null, contractId = null, retries = 0) {
   const token = await getAccessToken();
+  const maxRetries = 3;
 
   try {
     const response = await axios({
@@ -162,7 +163,16 @@ async function apiCall(method, endpoint, data = null, contractId = null) {
     const status = err.response?.status;
     const detail = err.response?.data;
     const errorDetail = typeof detail === 'string' ? { body: detail } : (detail || { message: err.message });
-    console.error(`[CA ERROR] ${method.toUpperCase()} ${endpoint} HTTP ${status}:`, JSON.stringify(errorDetail));
+
+    // Retry on 500 errors (CA server issues)
+    if (status === 500 && retries < maxRetries) {
+      const delay = (retries + 1) * 3000; // 3s, 6s, 9s
+      await logEvent('warn', 'contaazul', `${method.toUpperCase()} ${endpoint} got 500, retrying in ${delay/1000}s (attempt ${retries + 1}/${maxRetries})`, contractId);
+      await new Promise(r => setTimeout(r, delay));
+      return apiCall(method, endpoint, data, contractId, retries + 1);
+    }
+
+    console.error(`[CA ERROR] ${method.toUpperCase()} ${endpoint} HTTP ${status}:`, JSON.stringify(errorDetail).slice(0, 200));
     await logEvent(
       'error', 'contaazul',
       `${method.toUpperCase()} ${endpoint} failed (HTTP ${status ?? 'no-response'}): ${JSON.stringify(errorDetail).slice(0, 300)}`,
