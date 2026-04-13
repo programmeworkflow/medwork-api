@@ -62,6 +62,23 @@ router.get('/status', async (_req, res) => {
   res.json({ authorized });
 });
 
+// DEBUG: test GET requests to CA
+router.get('/test-get', async (req, res) => {
+  try {
+    const { getAccessToken } = require('../services/contaAzul');
+    const axios = require('axios');
+    const token = await getAccessToken();
+    const path = req.query.path || '/v1/pessoas';
+    const response = await axios.get(`https://api-v2.contaazul.com${path}`, {
+      headers: { Authorization: `Bearer ${token}` },
+      timeout: 15000,
+    });
+    res.json({ success: true, data: response.data });
+  } catch (err) {
+    res.json({ success: false, status: err.response?.status, error: err.response?.data });
+  }
+});
+
 // DEBUG: test creating pessoa with different formats
 router.post('/test-create', async (req, res) => {
   try {
