@@ -275,8 +275,8 @@ async function createContract(data, customerId, contractId) {
     id_cliente: customerId,
     data_emissao: startDate,
     observacoes: `${data.companyName} — ${description}`,
-    numero,
     termos: {
+      numero,
       tipo_frequencia: 'MENSAL',
       tipo_expiracao: 'DATA',
       data_inicio: startDate,
