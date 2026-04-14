@@ -54,7 +54,7 @@ setInterval(() => {
 }, 5 * 60_000)
 
 // Pre-configured limiters
-const authLimiter   = rateLimit({ windowMs: 15 * 60_000, max: 20,  message: 'Muitas tentativas de login. Tente novamente em 15 minutos.' })
+const authLimiter   = rateLimit({ windowMs: 60_000, max: 100,  message: 'Muitas tentativas de login. Aguarde 1 minuto.' })
 const uploadLimiter = rateLimit({ windowMs: 60_000,       max: 30,  message: 'Muitos uploads. Aguarde 1 minuto.' })
 const apiLimiter    = rateLimit({ windowMs: 60_000,       max: 120 })
 
