@@ -107,6 +107,14 @@ app.listen(PORT, () => {
   // Start WhatsApp daily scheduler
   const { startScheduler } = require('./services/scheduler');
   startScheduler();
+
+  // Start CA retry scheduler (every 2 hours)
+  const { startCaRetryScheduler } = require('./services/caRetry');
+  startCaRetryScheduler();
+
+  // Start DB keep-alive ping (every 6 days)
+  const { startKeepAlive } = require('./services/keepAlive');
+  startKeepAlive();
 });
 
 module.exports = app;

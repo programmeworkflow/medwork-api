@@ -60,7 +60,32 @@ async function parsePDF(buffer, fileId = null) {
 
 // ── Regex extractor ───────────────────────────────────────────
 function extractWithRegex(text) {
-  const result = { cnpj: null, email: null, services: [], monthlyValue: null, grossValue: null, netValue: null, discount: 0, observations: null };
+  const result = { cnpj: null, email: null, companyName: null, services: [], monthlyValue: null, grossValue: null, netValue: null, discount: 0, observations: null };
+
+  // Company name
+  const companyPatterns = [
+    /(?:Raz[ãa]o\s+Social|Empresa|Cliente|Contratante)[:\s]+([^\n\r]{3,100})/i,
+  ];
+  for (const p of companyPatterns) {
+    const m = text.match(p);
+    if (m) {
+      const name = m[1].replace(/\s+/g, ' ').trim();
+      if (name.length > 2) { result.companyName = name; break; }
+    }
+  }
+  // Fallback: line before CNPJ often has the company name
+  if (!result.companyName) {
+    const lines = text.split('\n');
+    for (let i = 1; i < lines.length; i++) {
+      if (/CNPJ/i.test(lines[i])) {
+        const prev = lines[i - 1].trim();
+        if (prev.length > 3 && prev.length < 120 && !/^[\d\s.\/\-]+$/.test(prev)) {
+          result.companyName = prev;
+          break;
+        }
+      }
+    }
+  }
 
   // CNPJ
   const cnpjPatterns = [
