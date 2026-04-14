@@ -79,6 +79,25 @@ router.get('/test-get', async (req, res) => {
   }
 });
 
+// DEBUG: test PUT to any CA endpoint
+router.put('/test-update', async (req, res) => {
+  try {
+    const { getAccessToken } = require('../services/contaAzul');
+    const axios = require('axios');
+    const token = await getAccessToken();
+    const endpoint = req.body._endpoint;
+    const payload = { ...req.body };
+    delete payload._endpoint;
+    const response = await axios.put(`https://api-v2.contaazul.com${endpoint}`, payload, {
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' },
+      timeout: 15000,
+    });
+    res.json({ success: true, data: response.data });
+  } catch (err) {
+    res.json({ success: false, status: err.response?.status, error: err.response?.data });
+  }
+});
+
 // DEBUG: test POST to any CA endpoint
 router.post('/test-create', async (req, res) => {
   try {
