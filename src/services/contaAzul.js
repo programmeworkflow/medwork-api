@@ -315,17 +315,16 @@ async function createContract(data, customerId, contractId) {
 async function processContaAzul(data, contractId) {
   await logEvent('info', 'contaazul', `Starting integration: ${data.companyName}`, contractId);
   const customer = await ensureCustomer(data);
-  await logEvent('info', 'contaazul', `Using client ID: ${customer.id}`, contractId);
-  const contract = await createContract(data, customer.id, contractId);
-  await logEvent('info', 'contaazul',
-    `Integration complete — contract ID: ${contract.id ?? contract.uuid ?? 'unknown'}`,
-    contractId
-  );
+  await logEvent('info', 'contaazul', `Customer ready: ${customer.id} (${customer.nome || data.companyName})`, contractId);
+
+  // NOTE: Contract creation via API is currently blocked by a CA bug
+  // (the "valor" field conflicts with service ID resolution)
+  // For now, we return customer info so the frontend can link to CA dashboard
   return {
     customerId:  customer.id ?? customer.uuid,
-    contractId:  contract.id ?? contract.uuid,
-    customer,
-    contract,
+    contractId:  null,
+    customerName: customer.nome || data.companyName,
+    status: 'pendente_ca',
   };
 }
 

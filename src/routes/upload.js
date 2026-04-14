@@ -69,16 +69,17 @@ router.post('/process', authenticate, upload.single('pdf'), async (req, res) => 
     await logEvent('info', 'parse', `Dados extraídos: ${companyName}`, contractId, fileId, req.user.id,
       { cnpj: parsedData.cnpj, monthlyValue: parsedData.monthlyValue, netValue, services: parsedData.services?.length||0 });
 
-    // 4. Conta Azul (real or mock)
+    // 4. Conta Azul — create/find customer, save as pendente_ca
     const caFn = process.env.CONTA_AZUL_CLIENT_ID ? processContaAzul : processContaAzulMock;
     let caResult = null;
     try {
       caResult = await caFn({ companyName: companyName.trim(), cnpj: parsedData.cnpj, email: parsedData.email,
         month, monthlyValue: parsedData.monthlyValue, discount: parsedData.discount,
         services: parsedData.services, observations: parsedData.observations }, contractId);
+      const status = caResult.contractId ? 'success' : 'pendente_ca';
       await query(
-        `UPDATE contracts SET status='success', conta_azul_customer_id=$1, conta_azul_contract_id=$2, start_date=$3, updated_at=NOW() WHERE id=$4`,
-        [caResult.customerId, caResult.contractId, `${month}-01`, contractId]
+        `UPDATE contracts SET status=$1, conta_azul_customer_id=$2, conta_azul_contract_id=$3, start_date=$4, updated_at=NOW() WHERE id=$5`,
+        [status, caResult.customerId, caResult.contractId, `${month}-01`, contractId]
       );
     } catch (caErr) {
       await logEvent('error', 'contaazul', `Conta Azul falhou: ${caErr.message}`, contractId, fileId, req.user.id);
