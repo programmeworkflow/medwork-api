@@ -79,16 +79,18 @@ router.get('/test-get', async (req, res) => {
   }
 });
 
-// DEBUG: test PUT to any CA endpoint
+// DEBUG: test PUT/PATCH to any CA endpoint
 router.put('/test-update', async (req, res) => {
   try {
     const { getAccessToken } = require('../services/contaAzul');
     const axios = require('axios');
     const token = await getAccessToken();
     const endpoint = req.body._endpoint;
+    const method = req.body._method || 'put';
     const payload = { ...req.body };
     delete payload._endpoint;
-    const response = await axios.put(`https://api-v2.contaazul.com${endpoint}`, payload, {
+    delete payload._method;
+    const response = await axios({ method, url: `https://api-v2.contaazul.com${endpoint}`, data: payload,
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' },
       timeout: 15000,
     });
