@@ -100,7 +100,7 @@ router.put('/test-update', async (req, res) => {
   }
 });
 
-// DEBUG: test POST to any CA endpoint
+// DEBUG: test POST to any CA endpoint (raw mode preserves field order)
 router.post('/test-create', async (req, res) => {
   try {
     const { getAccessToken } = require('../services/contaAzul');
@@ -113,6 +113,24 @@ router.post('/test-create', async (req, res) => {
     delete payload._baseUrl;
     console.log('[CA DEBUG] POST', baseUrl + endpoint, JSON.stringify(payload));
     const response = await axios.post(`${baseUrl}${endpoint}`, payload, {
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' },
+      timeout: 15000,
+    });
+    res.json({ success: true, data: response.data });
+  } catch (err) {
+    res.json({ success: false, status: err.response?.status, error: err.response?.data });
+  }
+});
+
+// DEBUG: raw JSON pass-through (preserves exact field order)
+router.post('/test-raw', async (req, res) => {
+  try {
+    const { getAccessToken } = require('../services/contaAzul');
+    const axios = require('axios');
+    const token = await getAccessToken();
+    const { endpoint, body } = req.body;
+    console.log('[CA RAW] POST', endpoint, body);
+    const response = await axios.post(`https://api-v2.contaazul.com${endpoint}`, body, {
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json; charset=utf-8' },
       timeout: 15000,
     });
