@@ -62,30 +62,45 @@ async function parsePDF(buffer, fileId = null) {
 function extractWithRegex(text) {
   const result = { cnpj: null, email: null, companyName: null, services: [], monthlyValue: null, grossValue: null, netValue: null, discount: 0, observations: null };
 
-  // Company name
+  // Company name — multiple strategies, validate result
   const companyPatterns = [
-    /(?:Raz[ãa]o\s+Social|Empresa|Cliente|Contratante)[:\s]+([^\n\r]{3,100})/i,
+    /Raz[ãa]o\s+Social[:\s]+([^\n\r]{3,100})/i,
+    /Contratante[:\s]+([^\n\r]{3,100})/i,
+    /Empresa[:\s]+([^\n\r]{3,100})/i,
+    /Cliente[:\s]+([^\n\r]{3,100})/i,
+    /Nome[:\s]+([^\n\r]{3,100})/i,
   ];
+  const isValidCompanyName = (name) => {
+    if (!name || name.length < 3 || name.length > 120) return false;
+    // Reject if looks like a service description, price, or generic text
+    if (/^[\d\s.\/\-]+$/.test(name)) return false;
+    if (/R\$\s*[\d.,]+/.test(name)) return false;
+    if (/exame|clínic|grupo\s+black|desconto|valor|total|serviço/i.test(name)) return false;
+    if (/^\d/.test(name)) return false; // starts with number
+    return true;
+  };
   for (const p of companyPatterns) {
     const m = text.match(p);
     if (m) {
       const name = m[1].replace(/\s+/g, ' ').trim();
-      if (name.length > 2) { result.companyName = name; break; }
+      if (isValidCompanyName(name)) { result.companyName = name; break; }
     }
   }
-  // Fallback: line before CNPJ often has the company name
+  // Fallback 1: line before CNPJ
   if (!result.companyName) {
     const lines = text.split('\n');
     for (let i = 1; i < lines.length; i++) {
       if (/CNPJ/i.test(lines[i])) {
         const prev = lines[i - 1].trim();
-        if (prev.length > 3 && prev.length < 120 && !/^[\d\s.\/\-]+$/.test(prev)) {
+        if (isValidCompanyName(prev)) {
           result.companyName = prev;
           break;
         }
       }
     }
   }
+  // Fallback 2: extract from filename pattern "Espelho Financeiro - COMPANY NAME.pdf"
+  // (this is handled in upload.js via originalname)
 
   // CNPJ
   const cnpjPatterns = [

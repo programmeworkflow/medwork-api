@@ -53,12 +53,34 @@ async function processSingleFile(file, month, companyName, userId) {
   const parsedData = await parsePDF(pdfBuffer, fileId);
 
   // Use parsed company name as fallback if not provided
-  const resolvedCompany = companyName?.trim() || parsedData.companyName || null;
+  // Also try extracting from filename: "Espelho Financeiro - COMPANY NAME.pdf"
+  let nameFromFile = null;
+  const fnMatch = file.originalname.match(/[-–—]\s*(.+?)\.pdf$/i);
+  if (fnMatch) nameFromFile = fnMatch[1].trim();
+
+  const resolvedCompany = companyName?.trim() || parsedData.companyName || nameFromFile || null;
   if (!resolvedCompany) {
     throw new Error('Nome da empresa não fornecido e não encontrado no PDF');
   }
 
-  // 3. Create contract record
+  // 3. Check for duplicate (same CNPJ + month)
+  if (parsedData.cnpj) {
+    const dup = await query(
+      'SELECT id, company_name FROM contracts WHERE cnpj=$1 AND month=$2', [parsedData.cnpj, month]
+    );
+    if (dup.rows.length > 0) {
+      return {
+        success: true,
+        duplicate: true,
+        existingCompany: dup.rows[0].company_name,
+        existingId: dup.rows[0].id,
+        parsed: { cnpj: parsedData.cnpj, companyName: resolvedCompany, monthlyValue: parsedData.monthlyValue },
+        message: `Contrato já existe para ${dup.rows[0].company_name} (${parsedData.cnpj}) no mês ${month}`,
+      };
+    }
+  }
+
+  // 4. Create contract record
   const netValue = Math.max(0, (parsedData.monthlyValue || 0) - (parsedData.discount || 0));
   const cr = await query(
     `INSERT INTO contracts (company_name,cnpj,email,services,monthly_value,discount,net_value,observations,month,status,created_by)
