@@ -31,10 +31,14 @@ async function parsePDF(buffer, fileId = null) {
 
   await logEvent('info', 'parse', 'Regex result', null, fileId, null, {
     cnpj:         extracted.cnpj         || 'NÃO ENCONTRADO',
+    companyName:  extracted.companyName   || 'NÃO ENCONTRADO',
     email:        extracted.email        || 'NÃO ENCONTRADO',
     monthlyValue: extracted.monthlyValue || 'NÃO ENCONTRADO',
     services:     extracted.services?.length || 0,
   });
+
+  // Debug: log first 500 chars of PDF text for troubleshooting
+  await logEvent('info', 'parse', `PDF text preview: ${rawText.substring(0, 500).replace(/\n/g, ' | ')}`, null, fileId);
 
   // If critical data missing, try AI
   if (!extracted.cnpj || !extracted.monthlyValue) {
