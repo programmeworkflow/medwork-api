@@ -231,7 +231,10 @@ async function ensureCustomer(data) {
   if (!customer) {
     await logEvent('info', 'contaazul', `CNPJ not found, creating customer: ${data.companyName} (${data.cnpj})`);
     customer = await createCustomer(data);
+    customer._existing = false;
     await logEvent('info', 'contaazul', `Customer created: ${customer.id} (${customer.nome})`);
+  } else {
+    customer._existing = true;
   }
   // The contract API may need the legacy ID instead of the UUID
   // Check pessoas_legado for the Cliente profile ID
@@ -308,6 +311,12 @@ async function processContaAzul(data, contractId) {
   await logEvent('info', 'contaazul', `Starting integration: ${data.companyName}`, contractId);
   const customer = await ensureCustomer(data);
   await logEvent('info', 'contaazul', `Customer ready: ${customer.id} (${customer.nome || data.companyName})`, contractId);
+
+  // Wait 2s after customer creation for CA to sync (new customers need propagation time)
+  if (!customer._existing) {
+    await logEvent('info', 'contaazul', 'Waiting 2s for new customer sync...', contractId);
+    await new Promise(r => setTimeout(r, 2000));
+  }
 
   const contract = await createContract(data, customer.id, contractId);
   await logEvent('info', 'contaazul',
