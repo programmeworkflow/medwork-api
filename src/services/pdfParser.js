@@ -66,56 +66,72 @@ async function parsePDF(buffer, fileId = null) {
 function extractWithRegex(text) {
   const result = { cnpj: null, email: null, companyName: null, services: [], monthlyValue: null, grossValue: null, netValue: null, discount: 0, observations: null };
 
-  // Company name — multiple strategies, validate result
+  // Company name — extract from espelho financeiro layout
+  // The PDF structure is: CNPJ value, then Razão Social value, then Nome Fantasia value
+  // Labels come AFTER values in a separate column
   const isValidCompanyName = (name) => {
     if (!name || name.length < 3 || name.length > 120) return false;
     if (/^[\d\s.\/\-]+$/.test(name)) return false;
     if (/R\$\s*[\d.,]+/.test(name)) return false;
-    if (/exame|cl[íi]nic|grupo\s+black|desconto|valor\s|total\s|servi[çc]o|fantasia|raz[ãa]o|social|cnpj|contratante/i.test(name)) return false;
+    if (/exame\s+cl[íi]nic|grupo\s+black|desconto|valor\s+(mensal|bruto|l[íi]quido|total|unit)/i.test(name)) return false;
+    if (/^servi[çc]os?\s+contrat/i.test(name)) return false;
+    if (/fantasia|raz[ãa]o\s*social|cnpj|contratante|endere[çc]o|bairro|cidade|cep/i.test(name)) return false;
+    if (/dados\s+d[aoe]|espelho|contrato|respons[áa]vel|servi[çc]os\s+contrat/i.test(name)) return false;
+    if (/^nome\s/i.test(name)) return false;
     if (/^\d/.test(name)) return false;
-    if (/^nome/i.test(name)) return false;
+    if (/^[A-Z]{1,3}\s*\d/.test(name)) return false; // reject "NR 12", "Q ARSO..."
+    if (name.length < 4) return false;
     return true;
   };
 
-  const lines = text.split('\n');
+  const lines = text.split('\n').map(l => l.trim());
 
-  // Strategy 1: Find label + value on same line or next line
-  const labelPatterns = [
-    /Raz[ãa]o\s+Social/i,
-    /Nome\s+(?:fantasia|empresa)/i,
-    /Contratante/i,
-    /Empresa/i,
-    /Cliente/i,
-  ];
-  for (const labelRe of labelPatterns) {
-    if (result.companyName) break;
-    for (let i = 0; i < lines.length; i++) {
-      if (labelRe.test(lines[i])) {
-        // Try same line: "Razão Social: COMPANY NAME"
-        const sameLine = lines[i].replace(labelRe, '').replace(/^[:\s]+/, '').trim();
-        if (isValidCompanyName(sameLine)) { result.companyName = sameLine; break; }
-        // Try next line
-        if (i + 1 < lines.length) {
-          const nextLine = lines[i + 1].trim();
-          if (isValidCompanyName(nextLine)) { result.companyName = nextLine; break; }
-        }
+  // Strategy 1: Find CNPJ value line, then the lines right after it are Razão Social and Nome Fantasia
+  // Pattern: line with CNPJ number → next line is Razão Social → next is Nome Fantasia
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    // Match a CNPJ value (XX.XXX.XXX/XXXX-XX)
+    if (/^\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}$/.test(line)) {
+      // Next line should be Razão Social
+      if (i + 1 < lines.length && isValidCompanyName(lines[i + 1])) {
+        result.companyName = lines[i + 1];
+        break;
       }
     }
   }
 
-  // Strategy 2: line before CNPJ
+  // Strategy 2: Find "DADOS DA CONTRATANTE" section
   if (!result.companyName) {
-    for (let i = 1; i < lines.length; i++) {
-      if (/CNPJ/i.test(lines[i])) {
-        const prev = lines[i - 1].trim();
-        if (isValidCompanyName(prev)) {
-          result.companyName = prev;
-          break;
+    for (let i = 0; i < lines.length; i++) {
+      if (/DADOS\s+DA\s+CONTRATANTE/i.test(lines[i])) {
+        // Scan next few lines for a valid company name
+        for (let j = i + 1; j < Math.min(i + 5, lines.length); j++) {
+          if (isValidCompanyName(lines[j]) && !/^\d{2}\.\d{3}/.test(lines[j])) {
+            result.companyName = lines[j];
+            break;
+          }
         }
+        if (result.companyName) break;
       }
     }
   }
-  // Fallback 3: filename extraction is handled in upload.js
+
+  // Strategy 3: Find label + value on same line
+  if (!result.companyName) {
+    const labelPatterns = [
+      /Raz[ãa]o\s+Social[:\s]+(.{3,100})/i,
+      /Nome\s+fantasia[:\s]+(.{3,100})/i,
+      /Contratante[:\s]+(.{3,100})/i,
+    ];
+    for (const p of labelPatterns) {
+      const m = text.match(p);
+      if (m && isValidCompanyName(m[1].trim())) {
+        result.companyName = m[1].trim();
+        break;
+      }
+    }
+  }
+  // Fallback: filename extraction is handled in upload.js
 
   // CNPJ
   const cnpjPatterns = [
