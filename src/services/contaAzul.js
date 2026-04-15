@@ -251,12 +251,8 @@ async function createContract(data, customerId, contractId) {
   const startDate  = `${year}-${monthNum}-01`;
   const endYear = parseInt(year) + 1;
   const endDate = `${endYear}-${monthNum}-01`;
-  // monthlyValue = valor BRUTO (total do contrato)
   const grossValue = data.monthlyValue || 0;
   const discount   = data.discount || 0;
-  const description = data.services?.length
-    ? data.services.slice(0, 3).join(', ')
-    : 'Programas e Laudos Técnicos';
 
   // Get next contract number
   let numero = 1;
@@ -265,30 +261,37 @@ async function createContract(data, customerId, contractId) {
     numero = numRes || 1;
   } catch { /* use default */ }
 
-  // Find first active service in CA to use as item reference
-  let itemId = null;
+  // Find the "Elaboração de Documentos" service (or first active)
+  let serviceId = null;
   try {
-    const items = await apiCall('get', '/v1/servicos?limit=50&status=ATIVO');
-    const list = items?.itens || items?.items || (Array.isArray(items) ? items : []);
-    const active = list.find(s => s.status === 'ATIVO');
-    if (active) {
-      itemId = active.id;
-      await logEvent('info', 'contaazul', `Using existing service: ${active.descricao} (${itemId})`);
+    const allServices = [];
+    for (let page = 0; page < 10; page++) {
+      const res = await apiCall('get', `/v1/servicos?pagina=${page}&limite=50&status=ATIVO`);
+      const list = res?.itens || [];
+      if (!list.length) break;
+      allServices.push(...list);
     }
+    // Prefer "Elaboração de Documentos" service
+    const preferred = allServices.find(s => /elabora.*documento.*sem.*reten/i.test(s.descricao));
+    serviceId = preferred?.id || allServices[0]?.id || null;
+    if (serviceId) await logEvent('info', 'contaazul', `Using service: ${preferred?.descricao || allServices[0]?.descricao} (${serviceId})`);
   } catch { /* ignore */ }
 
-  const itemEntry = {
-    quantidade: 1,
-    descricao: description,
-    valor: grossValue,
-  };
-  if (itemId) itemEntry.id_item = itemId;
+  // Build item: the key is using "id" for service reference + "valor" for price
+  const itemEntry = { id: serviceId, quantidade: 1, valor: grossValue };
   if (discount > 0) itemEntry.desconto = discount;
+
+  // Category "Programas e Laudos técnicos"
+  const categoriaId = '88b3796d-6f18-43eb-a6f6-9d9c1dfffa43';
+
+  // Observations for NF
+  const obsNF = `Referente aos documentos de segurança do trabalho PGR, PCMSO, LTCAT, LIP, eSocial e Psicossocial\nValor Total: R$ ${grossValue.toFixed(2)}${discount > 0 ? `\nValor com desconto de pontualidade: R$ ${(grossValue - discount).toFixed(2)}` : ''}`;
 
   const payload = {
     id_cliente: customerId,
+    id_categoria: categoriaId,
     data_emissao: startDate,
-    observacoes: `${data.companyName} — ${description}`,
+    observacoes: obsNF,
     termos: {
       numero,
       tipo_frequencia: 'MENSAL',
@@ -307,7 +310,6 @@ async function createContract(data, customerId, contractId) {
   };
 
   await logEvent('info', 'contaazul', `Creating contract #${numero} for customer ${customerId}`, contractId);
-  await logEvent('info', 'contaazul', `Contract payload: ${JSON.stringify(payload)}`, contractId);
   return apiCall('post', '/v1/contratos', payload, contractId);
 }
 
@@ -317,14 +319,15 @@ async function processContaAzul(data, contractId) {
   const customer = await ensureCustomer(data);
   await logEvent('info', 'contaazul', `Customer ready: ${customer.id} (${customer.nome || data.companyName})`, contractId);
 
-  // NOTE: Contract creation via API is currently blocked by a CA bug
-  // (the "valor" field conflicts with service ID resolution)
-  // For now, we return customer info so the frontend can link to CA dashboard
+  const contract = await createContract(data, customer.id, contractId);
+  await logEvent('info', 'contaazul',
+    `Contract created! ID: ${contract.id ?? contract.id_legado ?? 'unknown'}`, contractId);
+
   return {
     customerId:  customer.id ?? customer.uuid,
-    contractId:  null,
-    customerName: customer.nome || data.companyName,
-    status: 'pendente_ca',
+    contractId:  contract.id ?? contract.id_legado ?? null,
+    customer,
+    contract,
   };
 }
 
