@@ -261,21 +261,11 @@ async function createContract(data, customerId, contractId) {
     numero = numRes || 1;
   } catch { /* use default */ }
 
-  // Find the "Elaboração de Documentos" service (or first active)
-  let serviceId = null;
-  try {
-    const allServices = [];
-    for (let page = 0; page < 10; page++) {
-      const res = await apiCall('get', `/v1/servicos?pagina=${page}&limite=50&status=ATIVO`);
-      const list = res?.itens || [];
-      if (!list.length) break;
-      allServices.push(...list);
-    }
-    // Prefer "Elaboração de Documentos" service
-    const preferred = allServices.find(s => /elabora.*documento.*sem.*reten/i.test(s.descricao));
-    serviceId = preferred?.id || allServices[0]?.id || null;
-    if (serviceId) await logEvent('info', 'contaazul', `Using service: ${preferred?.descricao || allServices[0]?.descricao} (${serviceId})`);
-  } catch { /* ignore */ }
+  // Use cached service ID or find it
+  // "Elaboração de Documentos e Envios do Esocial (Sem Retenção)"
+  const KNOWN_SERVICE_ID = 'd66ab54e-d76d-4cdd-9ced-ae1691b4b554';
+  const serviceId = KNOWN_SERVICE_ID;
+  await logEvent('info', 'contaazul', `Using service: ${serviceId}`);
 
   // Build item: the key is using "id" for service reference + "valor" for price
   const itemEntry = { id: serviceId, quantidade: 1, valor: grossValue };
