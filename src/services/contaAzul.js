@@ -284,7 +284,19 @@ async function createContract(data, customerId, contractId) {
     id_cliente: customerId,
     id_categoria: categoriaId,
     data_emissao: startDate,
+    observacoes: obsNF,
     observacoes_nf: obsNF,
+    // Email/cobrança/NFS-e automáticos
+    envio_automatico_email: true,
+    gerar_cobranca_automaticamente: true,
+    emitir_nfse_automaticamente: true,
+    quando_emitir_nfse: 'ASSIM_QUE_VENDA_FOR_GERADA',
+    configuracao_email: {
+      enviar_detalhes_venda: true,
+      gerar_cobranca: true,
+      emitir_nfse: true,
+      quando_emitir_nfse: 'ASSIM_QUE_VENDA_FOR_GERADA',
+    },
     termos: {
       numero,
       tipo_frequencia: 'MENSAL',
