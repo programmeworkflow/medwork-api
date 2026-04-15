@@ -63,32 +63,44 @@ function extractWithRegex(text) {
   const result = { cnpj: null, email: null, companyName: null, services: [], monthlyValue: null, grossValue: null, netValue: null, discount: 0, observations: null };
 
   // Company name — multiple strategies, validate result
-  const companyPatterns = [
-    /Raz[ãa]o\s+Social[:\s]+([^\n\r]{3,100})/i,
-    /Contratante[:\s]+([^\n\r]{3,100})/i,
-    /Empresa[:\s]+([^\n\r]{3,100})/i,
-    /Cliente[:\s]+([^\n\r]{3,100})/i,
-    /Nome[:\s]+([^\n\r]{3,100})/i,
-  ];
   const isValidCompanyName = (name) => {
     if (!name || name.length < 3 || name.length > 120) return false;
-    // Reject if looks like a service description, price, or generic text
     if (/^[\d\s.\/\-]+$/.test(name)) return false;
     if (/R\$\s*[\d.,]+/.test(name)) return false;
-    if (/exame|clínic|grupo\s+black|desconto|valor|total|serviço/i.test(name)) return false;
-    if (/^\d/.test(name)) return false; // starts with number
+    if (/exame|cl[íi]nic|grupo\s+black|desconto|valor\s|total\s|servi[çc]o|fantasia|raz[ãa]o|social|cnpj|contratante/i.test(name)) return false;
+    if (/^\d/.test(name)) return false;
+    if (/^nome/i.test(name)) return false;
     return true;
   };
-  for (const p of companyPatterns) {
-    const m = text.match(p);
-    if (m) {
-      const name = m[1].replace(/\s+/g, ' ').trim();
-      if (isValidCompanyName(name)) { result.companyName = name; break; }
+
+  const lines = text.split('\n');
+
+  // Strategy 1: Find label + value on same line or next line
+  const labelPatterns = [
+    /Raz[ãa]o\s+Social/i,
+    /Nome\s+(?:fantasia|empresa)/i,
+    /Contratante/i,
+    /Empresa/i,
+    /Cliente/i,
+  ];
+  for (const labelRe of labelPatterns) {
+    if (result.companyName) break;
+    for (let i = 0; i < lines.length; i++) {
+      if (labelRe.test(lines[i])) {
+        // Try same line: "Razão Social: COMPANY NAME"
+        const sameLine = lines[i].replace(labelRe, '').replace(/^[:\s]+/, '').trim();
+        if (isValidCompanyName(sameLine)) { result.companyName = sameLine; break; }
+        // Try next line
+        if (i + 1 < lines.length) {
+          const nextLine = lines[i + 1].trim();
+          if (isValidCompanyName(nextLine)) { result.companyName = nextLine; break; }
+        }
+      }
     }
   }
-  // Fallback 1: line before CNPJ
+
+  // Strategy 2: line before CNPJ
   if (!result.companyName) {
-    const lines = text.split('\n');
     for (let i = 1; i < lines.length; i++) {
       if (/CNPJ/i.test(lines[i])) {
         const prev = lines[i - 1].trim();
@@ -99,8 +111,7 @@ function extractWithRegex(text) {
       }
     }
   }
-  // Fallback 2: extract from filename pattern "Espelho Financeiro - COMPANY NAME.pdf"
-  // (this is handled in upload.js via originalname)
+  // Fallback 3: filename extraction is handled in upload.js
 
   // CNPJ
   const cnpjPatterns = [
