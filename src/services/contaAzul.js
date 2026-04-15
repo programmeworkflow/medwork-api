@@ -288,8 +288,9 @@ async function createContract(data, customerId, contractId) {
     termos: {
       numero,
       tipo_frequencia: 'MENSAL',
-      tipo_expiracao: 'INDETERMINADO',
+      tipo_expiracao: 'DATA',
       data_inicio: startDate,
+      data_fim: endDate,
       intervalo_frequencia: 1,
       dia_emissao_venda: 1,
     },
