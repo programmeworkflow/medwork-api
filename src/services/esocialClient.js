@@ -178,8 +178,8 @@ async function callPhp(endpoint, payload) {
 async function consultarEventos(cnpj, tpEvt, perApur) {
   if (!cnpj) throw new Error('CNPJ obrigatório');
   if (!tpEvt) throw new Error('tpEvt obrigatório');
-  if (!perApur || !/^\d{4}-\d{2}$/.test(perApur)) {
-    throw new Error("perApur deve ser no formato 'YYYY-MM'");
+  if (!perApur || !/^\d{4}(-\d{2})?$/.test(perApur)) {
+    throw new Error("perApur deve ser no formato 'YYYY' ou 'YYYY-MM'");
   }
 
   const cert = await getCertBuffer();

@@ -45,6 +45,18 @@ function lastMonths(n = 6) {
 }
 
 /**
+ * Build the last N YYYY years (for non-periodic events).
+ */
+function lastYears(n = 7) {
+  const periods = [];
+  const currentYear = new Date().getUTCFullYear();
+  for (let i = 0; i < n; i++) {
+    periods.push(String(currentYear - i));
+  }
+  return periods;
+}
+
+/**
  * Upsert a funcionário based on an admissão event.
  */
 async function upsertAdmissao(empresa, ev, parsed) {
@@ -188,8 +200,9 @@ async function syncEmpresa(empresaId) {
     { empresaId }
   );
 
-  // 5 years back to capture active employees admitted years ago
-  const periods = lastMonths(60);
+  // For non-periodic events (admissão/desligamento), perApur is YEAR only.
+  // 8 years back (eSocial started in 2018).
+  const periods = lastYears(8);
   const tpEvts = ['evtAdmissao', 'evtDeslig'];
   const summary = {
     empresaId,
