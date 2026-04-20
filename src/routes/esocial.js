@@ -7,6 +7,8 @@ const {
   encryptCertificate,
   parseCertificateInfo,
 } = require('../services/esocialCert');
+const { resetAgentCache } = require('../services/esocialClient');
+const { syncEmpresa }     = require('../services/esocialSync');
 
 const router = express.Router();
 
@@ -91,6 +93,9 @@ router.post(
         ]
       );
 
+      // Invalidate cached https.Agent so next sync uses the new cert
+      resetAgentCache();
+
       return res.json({
         success: true,
         config: result.rows[0],
@@ -111,7 +116,6 @@ router.post(
 
 // ──────────────────────────────────────────────────────────────
 // GET /api/esocial/config
-// Returns the active config (no certificate bytes)
 // ──────────────────────────────────────────────────────────────
 router.get('/config', authenticate, requireAdminOrFinanceiro, async (req, res) => {
   try {
@@ -139,6 +143,7 @@ router.delete('/config/:id', authenticate, requireAdminOrFinanceiro, async (req,
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Configuração não encontrada' });
     }
+    resetAgentCache();
     return res.json({ success: true, id: result.rows[0].id });
   } catch (err) {
     console.error('[esocial/config/:id DELETE]', err);
@@ -148,13 +153,26 @@ router.delete('/config/:id', authenticate, requireAdminOrFinanceiro, async (req,
 
 // ──────────────────────────────────────────────────────────────
 // GET /api/esocial/empresas
+// Returns each empresa with a count of funcionários.
 // ──────────────────────────────────────────────────────────────
 router.get('/empresas', authenticate, requireAdminOrFinanceiro, async (req, res) => {
   try {
     const result = await query(
-      `SELECT id, cnpj, razao_social, sincronizado_em, procuracao_ativa, created_at
-         FROM esocial_empresas
-        ORDER BY razao_social NULLS LAST, cnpj`
+      `SELECT em.id, em.cnpj, em.razao_social, em.sincronizado_em,
+              em.procuracao_ativa, em.created_at,
+              COALESCE(cnt.total, 0)::int       AS total_funcionarios,
+              COALESCE(cnt.ativos, 0)::int      AS funcionarios_ativos,
+              COALESCE(cnt.desligados, 0)::int  AS funcionarios_desligados
+         FROM esocial_empresas em
+         LEFT JOIN (
+           SELECT empresa_id,
+                  COUNT(*)                                   AS total,
+                  COUNT(*) FILTER (WHERE situacao='ativo')    AS ativos,
+                  COUNT(*) FILTER (WHERE situacao='desligado')AS desligados
+             FROM esocial_funcionarios
+            GROUP BY empresa_id
+         ) cnt ON cnt.empresa_id = em.id
+        ORDER BY em.razao_social NULLS LAST, em.cnpj`
     );
     return res.json({ empresas: result.rows });
   } catch (err) {
@@ -164,29 +182,148 @@ router.get('/empresas', authenticate, requireAdminOrFinanceiro, async (req, res)
 });
 
 // ──────────────────────────────────────────────────────────────
-// GET /api/esocial/funcionarios?empresa_id=X&situacao=Y
+// POST /api/esocial/empresas
+// Body: { cnpj: string, razao_social?: string }
+// Upserts by CNPJ.
+// ──────────────────────────────────────────────────────────────
+router.post('/empresas', authenticate, requireAdminOrFinanceiro, async (req, res) => {
+  try {
+    const rawCnpj = String(req.body?.cnpj || '').replace(/\D/g, '');
+    const razaoSocial = (req.body?.razao_social || '').toString().trim();
+
+    if (rawCnpj.length !== 14) {
+      return res.status(400).json({ error: 'CNPJ inválido (precisa ter 14 dígitos)' });
+    }
+
+    const result = await query(
+      `INSERT INTO esocial_empresas (cnpj, razao_social, procuracao_ativa)
+       VALUES ($1, $2, true)
+       ON CONFLICT (cnpj) DO UPDATE SET
+         razao_social = COALESCE(EXCLUDED.razao_social, esocial_empresas.razao_social),
+         procuracao_ativa = true
+       RETURNING id, cnpj, razao_social, sincronizado_em, procuracao_ativa, created_at`,
+      [rawCnpj, razaoSocial || null]
+    );
+
+    return res.json({ empresa: result.rows[0] });
+  } catch (err) {
+    console.error('[esocial/empresas POST]', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ──────────────────────────────────────────────────────────────
+// DELETE /api/esocial/empresas/:id
+// ──────────────────────────────────────────────────────────────
+router.delete('/empresas/:id', authenticate, requireAdminOrFinanceiro, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await query(
+      `DELETE FROM esocial_empresas WHERE id = $1 RETURNING id`,
+      [id]
+    );
+    if (!result.rows.length) {
+      return res.status(404).json({ error: 'Empresa não encontrada' });
+    }
+    return res.json({ success: true, id: result.rows[0].id });
+  } catch (err) {
+    console.error('[esocial/empresas/:id DELETE]', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ──────────────────────────────────────────────────────────────
+// POST /api/esocial/sync/:empresaId
+// Triggers an immediate sync for one empresa. Returns the summary.
+// ──────────────────────────────────────────────────────────────
+router.post('/sync/:empresaId', authenticate, requireAdminOrFinanceiro, async (req, res) => {
+  const { empresaId } = req.params;
+  try {
+    // Ensure we have a certificate first — fail fast with a clear error
+    const cfg = await query(`SELECT id FROM esocial_config WHERE active = true LIMIT 1`);
+    if (!cfg.rows.length) {
+      return res.status(422).json({ error: 'Nenhum certificado ativo configurado. Faça upload do certificado A1 antes de sincronizar.' });
+    }
+
+    const summary = await syncEmpresa(empresaId);
+    return res.json({ success: true, summary });
+  } catch (err) {
+    console.error('[esocial/sync/:empresaId]', err);
+    return res.status(500).json({ error: err.message || 'Erro ao sincronizar' });
+  }
+});
+
+// ──────────────────────────────────────────────────────────────
+// GET /api/esocial/funcionarios
+// Query: empresa_id, situacao, page (1-based), pageSize (default 25)
+// Returns { funcionarios, page, pageSize, total, totalPages }
 // ──────────────────────────────────────────────────────────────
 router.get('/funcionarios', authenticate, requireAdminOrFinanceiro, async (req, res) => {
   try {
     const { empresa_id, situacao } = req.query;
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const pageSize = Math.min(Math.max(parseInt(req.query.pageSize, 10) || 25, 1), 200);
+
     const conds = [];
     const params = [];
-    if (empresa_id) { params.push(empresa_id); conds.push(`empresa_id = $${params.length}`); }
-    if (situacao)   { params.push(situacao);   conds.push(`situacao = $${params.length}`); }
+    if (empresa_id) { params.push(empresa_id); conds.push(`f.empresa_id = $${params.length}`); }
+    if (situacao)   { params.push(situacao);   conds.push(`f.situacao = $${params.length}`); }
     const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
-    const result = await query(
-      `SELECT id, empresa_id, cnpj_empresa, cpf, nome, matricula,
-              data_admissao, data_desligamento, situacao, cargo,
-              ultimo_evento_id, ultima_sync
-         FROM esocial_funcionarios
-         ${where}
-         ORDER BY nome
-         LIMIT 1000`,
+
+    const countRes = await query(
+      `SELECT COUNT(*)::int AS total FROM esocial_funcionarios f ${where}`,
       params
     );
-    return res.json({ funcionarios: result.rows });
+    const total = countRes.rows[0]?.total || 0;
+
+    const offset = (page - 1) * pageSize;
+    params.push(pageSize);
+    params.push(offset);
+
+    const result = await query(
+      `SELECT f.id, f.empresa_id, f.cnpj_empresa, f.cpf, f.nome, f.matricula,
+              f.data_admissao, f.data_desligamento, f.situacao, f.cargo,
+              f.ultimo_evento_id, f.ultima_sync,
+              em.razao_social AS empresa_razao_social
+         FROM esocial_funcionarios f
+         LEFT JOIN esocial_empresas em ON em.id = f.empresa_id
+         ${where}
+         ORDER BY f.nome
+         LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params
+    );
+
+    return res.json({
+      funcionarios: result.rows,
+      page,
+      pageSize,
+      total,
+      totalPages: Math.ceil(total / pageSize) || 0,
+    });
   } catch (err) {
     console.error('[esocial/funcionarios]', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ──────────────────────────────────────────────────────────────
+// GET /api/esocial/stats
+// Dashboard stats: totals and last sync.
+// ──────────────────────────────────────────────────────────────
+router.get('/stats', authenticate, requireAdminOrFinanceiro, async (req, res) => {
+  try {
+    const r = await query(
+      `SELECT
+         (SELECT COUNT(*)::int FROM esocial_empresas WHERE procuracao_ativa = true) AS empresas_ativas,
+         (SELECT COUNT(*)::int FROM esocial_empresas) AS empresas_total,
+         (SELECT COUNT(*)::int FROM esocial_funcionarios WHERE situacao='ativo') AS func_ativos,
+         (SELECT COUNT(*)::int FROM esocial_funcionarios WHERE situacao='desligado') AS func_desligados,
+         (SELECT COUNT(*)::int FROM esocial_funcionarios) AS func_total,
+         (SELECT MAX(sincronizado_em) FROM esocial_empresas) AS ultima_sync`
+    );
+    return res.json({ stats: r.rows[0] });
+  } catch (err) {
+    console.error('[esocial/stats]', err);
     return res.status(500).json({ error: err.message });
   }
 });

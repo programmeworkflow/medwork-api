@@ -117,6 +117,10 @@ app.listen(PORT, () => {
   // Start DB keep-alive ping (every 6 days)
   const { startKeepAlive } = require('./services/keepAlive');
   startKeepAlive();
+
+  // Start eSocial sync scheduler (every 24 hours)
+  const { startSyncScheduler } = require('./services/esocialSync');
+  startSyncScheduler();
 });
 
 module.exports = app;
