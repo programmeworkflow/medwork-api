@@ -188,7 +188,8 @@ async function syncEmpresa(empresaId) {
     { empresaId }
   );
 
-  const periods = lastMonths(6);
+  // 5 years back to capture active employees admitted years ago
+  const periods = lastMonths(60);
   const tpEvts = ['evtAdmissao', 'evtDeslig'];
   const summary = {
     empresaId,
