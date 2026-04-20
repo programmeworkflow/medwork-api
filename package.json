@@ -31,7 +31,8 @@
     "pdf-parse": "^1.1.1",
     "pdfkit": "^0.18.0",
     "pg": "^8.11.3",
-    "uuid": "^9.0.0"
+    "uuid": "^9.0.0",
+    "xml-crypto": "^6.1.2"
   },
   "devDependencies": {
     "nodemon": "^3.0.2"

@@ -19,6 +19,7 @@ const { XMLParser } = require('fast-xml-parser');
 
 const { query } = require('../config/database');
 const { decryptCertificate } = require('./esocialCert');
+const { signEsocialXml } = require('./xmlSigner');
 
 // ──────────────────────────────────────────────────────────────
 // Endpoints
@@ -56,6 +57,8 @@ let cachedAgent = null;
 let cachedAgentAt = 0;
 const CERT_CACHE_MS = 5 * 60 * 1000;
 
+let cachedCert = null;
+
 async function getHttpsAgent() {
   if (cachedAgent && Date.now() - cachedAgentAt < CERT_CACHE_MS) {
     return cachedAgent;
@@ -80,14 +83,20 @@ async function getHttpsAgent() {
     row.iv
   );
 
+  cachedCert = { buffer: certificate, password };
   cachedAgent = new https.Agent({
     pfx: certificate,
     passphrase: password,
-    rejectUnauthorized: false, // ICP-Brasil CA chain not in Node bundle; cert validation disabled
+    rejectUnauthorized: false,
     keepAlive: true,
   });
   cachedAgentAt = Date.now();
   return cachedAgent;
+}
+
+async function getCertBuffer() {
+  await getHttpsAgent(); // triggers cache
+  return cachedCert;
 }
 
 /**
@@ -96,6 +105,7 @@ async function getHttpsAgent() {
 function resetAgentCache() {
   cachedAgent = null;
   cachedAgentAt = 0;
+  cachedCert = null;
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -163,6 +173,13 @@ async function consultarEventos(cnpj, tpEvt, perApur) {
   const raiz = cnpjRaiz(cnpj);
   const endpoints = getEndpoints();
   const agent = await getHttpsAgent();
+  const cert = await getCertBuffer();
+
+  // Build the inner eSocial XML
+  const innerEsocial = `<eSocial xmlns="http://www.esocial.gov.br/schema/consulta/identificadores-eventos/empregador/v1_0_0"><consultaIdentificadoresEvts><ideEmpregador><tpInsc>1</tpInsc><nrInsc>${raiz}</nrInsc></ideEmpregador><consultaEvtsEmpregador><tpEvt>${tpEvt}</tpEvt><perApur>${perApur}</perApur></consultaEvtsEmpregador></consultaIdentificadoresEvts></eSocial>`;
+
+  // Sign the inner eSocial XML
+  const signedEsocial = signEsocialXml(innerEsocial, cert.buffer, cert.password);
 
   const envelope =
 `<?xml version="1.0" encoding="UTF-8"?>
@@ -170,20 +187,7 @@ async function consultarEventos(cnpj, tpEvt, perApur) {
   <soapenv:Header/>
   <soapenv:Body>
     <v1:ConsultarIdentificadoresEventosEmpregador>
-      <v1:consultaEventosEmpregador>
-        <eSocial xmlns="http://www.esocial.gov.br/schema/consulta/identificadores-eventos/empregador/v1_0_0">
-          <consultaIdentificadoresEvts>
-            <ideEmpregador>
-              <tpInsc>1</tpInsc>
-              <nrInsc>${raiz}</nrInsc>
-            </ideEmpregador>
-            <consultaEvtsEmpregador>
-              <tpEvt>${tpEvt}</tpEvt>
-              <perApur>${perApur}</perApur>
-            </consultaEvtsEmpregador>
-          </consultaIdentificadoresEvts>
-        </eSocial>
-      </v1:consultaEventosEmpregador>
+      <v1:consultaEventosEmpregador>${signedEsocial}</v1:consultaEventosEmpregador>
     </v1:ConsultarIdentificadoresEventosEmpregador>
   </soapenv:Body>
 </soapenv:Envelope>`;
