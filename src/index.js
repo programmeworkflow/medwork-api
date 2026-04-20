@@ -14,6 +14,7 @@ const logRoutes           = require('./routes/logs');
 const notificationRoutes  = require('./routes/notifications');
 const userRoutes          = require('./routes/users');
 const contaAzulRoutes     = require('./routes/contaazul');
+const esocialRoutes       = require('./routes/esocial');
 const { authLimiter, uploadLimiter, apiLimiter } = require('./middleware/rateLimit');
 
 const app  = express();
@@ -75,6 +76,7 @@ app.use('/api/dashboard',     apiLimiter,    dashboardRoutes);
 app.use('/api/logs',          apiLimiter,    logRoutes);
 app.use('/api/notifications', apiLimiter,    notificationRoutes);
 app.use('/api/contaazul',                    contaAzulRoutes);
+app.use('/api/esocial',       apiLimiter,    esocialRoutes);
 
 // ── 404 ───────────────────────────────────────────────────────
 app.use((req, res) => {
