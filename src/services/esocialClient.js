@@ -39,7 +39,7 @@ const ENDPOINTS = {
 };
 
 const CONSULTA_NS =
-  'http://www.esocial.gov.br/servicos/empregador/consulta/identificadores-eventos/empregador/v1_1_1';
+  'http://www.esocial.gov.br/servicos/empregador/consulta/identificadores-eventos/v1_0_0';
 const DOWNLOAD_NS =
   'http://www.esocial.gov.br/servicos/empregador/download/solicitacao/v1_0_0';
 
@@ -190,7 +190,7 @@ async function consultarEventos(cnpj, tpEvt, perApur) {
     headers: {
       'Content-Type': 'text/xml; charset=utf-8',
       SOAPAction:
-        'http://www.esocial.gov.br/servicos/empregador/consulta/identificadores-eventos/empregador/v1_1_1/ServicoConsultarIdentificadoresEventos/ConsultarIdentificadoresEventosEmpregador',
+        'http://www.esocial.gov.br/servicos/empregador/consulta/identificadores-eventos/v1_0_0/ServicoConsultarIdentificadoresEventos/ConsultarIdentificadoresEventosEmpregador',
     },
     // Do not throw on >=400 so we can inspect the SOAP fault
     validateStatus: () => true,
@@ -275,7 +275,7 @@ async function downloadEvento(cnpj, eventoId) {
     headers: {
       'Content-Type': 'text/xml; charset=utf-8',
       SOAPAction:
-        'http://www.esocial.gov.br/servicos/empregador/download/solicitacao/v1_0_0/ServicoDownloadEventos/DownloadEvento',
+        'http://www.esocial.gov.br/servicos/empregador/download/solicitacao/v1_0_0/ServicoSolicitarDownloadEventos/SolicitarDownloadEventosPorId',
     },
     validateStatus: () => true,
     transformResponse: [(data) => data],
