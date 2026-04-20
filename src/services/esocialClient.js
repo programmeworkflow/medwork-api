@@ -26,15 +26,15 @@ const { decryptCertificate } = require('./esocialCert');
 const ENDPOINTS = {
   production: {
     consultar:
-      'https://webservices.envio.esocial.gov.br/servicos/empregador/consultaridentificadoreseventos/WsConsultarIdentificadoresEventos.svc',
+      'https://webservices.download.esocial.gov.br/servicos/empregador/dwlcirurgico/WsConsultarIdentificadoresEventos.svc',
     download:
-      'https://webservices.envio.esocial.gov.br/servicos/empregador/downloadeventos/WsDownloadEventos.svc',
+      'https://webservices.download.esocial.gov.br/servicos/empregador/dwlcirurgico/WsSolicitarDownloadEventos.svc',
   },
   homolog: {
     consultar:
-      'https://webservices.producaorestrita.esocial.gov.br/servicos/empregador/consultaridentificadoreseventos/WsConsultarIdentificadoresEventos.svc',
+      'https://webservices.producaorestrita.esocial.gov.br/servicos/empregador/dwlcirurgico/WsConsultarIdentificadoresEventos.svc',
     download:
-      'https://webservices.producaorestrita.esocial.gov.br/servicos/empregador/downloadeventos/WsDownloadEventos.svc',
+      'https://webservices.producaorestrita.esocial.gov.br/servicos/empregador/dwlcirurgico/WsSolicitarDownloadEventos.svc',
   },
 };
 
@@ -83,7 +83,7 @@ async function getHttpsAgent() {
   cachedAgent = new https.Agent({
     pfx: certificate,
     passphrase: password,
-    rejectUnauthorized: true,
+    rejectUnauthorized: false, // ICP-Brasil CA chain not in Node bundle; cert validation disabled
     keepAlive: true,
   });
   cachedAgentAt = Date.now();
