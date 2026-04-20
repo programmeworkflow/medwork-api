@@ -1,67 +1,49 @@
 /**
- * eSocial SOAP webservice client.
+ * eSocial client — thin HTTP wrapper around the PHP microservice.
  *
- * Consults and downloads eSocial events using the empregador endpoints.
- * Requires mTLS (client certificate) for authentication — we load the
- * active A1 certificate from esocial_config, decrypt it, and pass it to
- * the https.Agent via pfx/passphrase.
+ * The actual SOAP + XML-DSIG work is delegated to a small PHP service that
+ * uses nfephp-org/sped-esocial. This module just:
+ *  1. Loads the active A1 certificate from esocial_config and decrypts it.
+ *  2. Sends {certificate, password, cnpj, ...params} as JSON to PHP.
+ *  3. Returns the parsed response (event identifiers / event XML).
+ *
+ * The certificate buffer is cached in memory for 5 minutes to avoid
+ * decrypting on every call, but we never persist it to disk.
  *
  * IMPORTANT:
- *  - We default to the homologation URL (producaorestrita). Production is
- *    enabled only when ESOCIAL_ENV=production.
- *  - We NEVER throw if the eSocial webservice is unreachable — callers
- *    should handle the rejected promise and continue with next empresa.
+ *  - Callers should handle rejected promises — a single failed empresa
+ *    should not stop a batch sync.
+ *  - Function signatures match the old implementation so esocialSync.js
+ *    keeps working unchanged.
  */
 
-const https = require('https');
 const axios = require('axios');
-const { XMLParser } = require('fast-xml-parser');
 
 const { query } = require('../config/database');
 const { decryptCertificate } = require('./esocialCert');
-const { signEsocialXml } = require('./xmlSigner');
 
 // ──────────────────────────────────────────────────────────────
-// Endpoints
+// PHP microservice URL
 // ──────────────────────────────────────────────────────────────
-const ENDPOINTS = {
-  production: {
-    consultar:
-      'https://webservices.download.esocial.gov.br/servicos/empregador/dwlcirurgico/WsConsultarIdentificadoresEventos.svc',
-    download:
-      'https://webservices.download.esocial.gov.br/servicos/empregador/dwlcirurgico/WsSolicitarDownloadEventos.svc',
-  },
-  homolog: {
-    consultar:
-      'https://webservices.producaorestrita.esocial.gov.br/servicos/empregador/dwlcirurgico/WsConsultarIdentificadoresEventos.svc',
-    download:
-      'https://webservices.producaorestrita.esocial.gov.br/servicos/empregador/dwlcirurgico/WsSolicitarDownloadEventos.svc',
-  },
-};
+const PHP_URL = (
+  process.env.ESOCIAL_PHP_URL || 'https://esocial-php.onrender.com'
+).replace(/\/+$/, '');
 
-const CONSULTA_NS =
-  'http://www.esocial.gov.br/servicos/empregador/consulta/identificadores-eventos/v1_0_0';
-const DOWNLOAD_NS =
-  'http://www.esocial.gov.br/servicos/empregador/download/solicitacao/v1_0_0';
+const AMBIENTE =
+  process.env.ESOCIAL_ENV === 'production' ? 'production' : 'homolog';
 
-function getEndpoints() {
-  return process.env.ESOCIAL_ENV === 'production'
-    ? ENDPOINTS.production
-    : ENDPOINTS.homolog;
-}
+const PHP_TIMEOUT_MS = 90_000;
 
 // ──────────────────────────────────────────────────────────────
-// Certificate loading (cached in memory for ~5 minutes)
+// Certificate loading (cached ~5 min in memory)
 // ──────────────────────────────────────────────────────────────
-let cachedAgent = null;
-let cachedAgentAt = 0;
+let cachedCert = null;
+let cachedCertAt = 0;
 const CERT_CACHE_MS = 5 * 60 * 1000;
 
-let cachedCert = null;
-
-async function getHttpsAgent() {
-  if (cachedAgent && Date.now() - cachedAgentAt < CERT_CACHE_MS) {
-    return cachedAgent;
+async function getCertBuffer() {
+  if (cachedCert && Date.now() - cachedCertAt < CERT_CACHE_MS) {
+    return cachedCert;
   }
 
   const result = await query(
@@ -84,28 +66,16 @@ async function getHttpsAgent() {
   );
 
   cachedCert = { buffer: certificate, password };
-  cachedAgent = new https.Agent({
-    pfx: certificate,
-    passphrase: password,
-    rejectUnauthorized: false,
-    keepAlive: true,
-  });
-  cachedAgentAt = Date.now();
-  return cachedAgent;
-}
-
-async function getCertBuffer() {
-  await getHttpsAgent(); // triggers cache
+  cachedCertAt = Date.now();
   return cachedCert;
 }
 
 /**
- * Clear the cached https agent — call when the certificate is replaced.
+ * Clear the cached certificate — call when the certificate is replaced.
  */
 function resetAgentCache() {
-  cachedAgent = null;
-  cachedAgentAt = 0;
   cachedCert = null;
+  cachedCertAt = 0;
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -123,45 +93,87 @@ function cnpjRaiz(cnpj) {
   return digits.slice(0, 8);
 }
 
-const xmlParser = new XMLParser({
-  ignoreAttributes: false,
-  attributeNamePrefix: '@_',
-  removeNSPrefix: true,
-  trimValues: true,
-});
-
-function findAll(obj, key, results = []) {
-  if (!obj || typeof obj !== 'object') return results;
-  if (Array.isArray(obj)) {
-    for (const item of obj) findAll(item, key, results);
-    return results;
-  }
-  for (const k of Object.keys(obj)) {
-    if (k === key) {
-      const v = obj[k];
-      if (Array.isArray(v)) results.push(...v);
-      else results.push(v);
-    }
-    findAll(obj[k], key, results);
-  }
-  return results;
+/**
+ * Map the legacy tpEvt values used by syncService to the S-xxxx codes the
+ * sped-esocial library expects.
+ */
+function toSCode(tpEvt) {
+  const map = {
+    evtAdmissao: 'S-2200',
+    evtDeslig: 'S-2299',
+    evtAltContratual: 'S-2206',
+    evtAltCadastral: 'S-2205',
+    evtTSVInicio: 'S-2300',
+    evtTSVTermino: 'S-2399',
+  };
+  return map[tpEvt] || tpEvt;
 }
 
-function findFirst(obj, key) {
-  const all = findAll(obj, key);
-  return all.length ? all[0] : null;
+/**
+ * Map the evt* names returned by the PHP service (e.g. "evtAdmissao") back
+ * to themselves — we keep tpEvt in that format throughout the codebase.
+ */
+function fromPhpTpEvt(phpTpEvt, fallback) {
+  if (!phpTpEvt) return fallback;
+  // PHP service returns evtAdmissao/evtDeslig etc already in the node code.
+  return phpTpEvt;
+}
+
+async function callPhp(endpoint, payload) {
+  const url = `${PHP_URL}${endpoint}`;
+  try {
+    const res = await axios.post(url, payload, {
+      timeout: PHP_TIMEOUT_MS,
+      headers: { 'Content-Type': 'application/json' },
+      validateStatus: () => true,
+    });
+
+    if (res.status >= 500) {
+      const err =
+        res.data && res.data.error
+          ? res.data.error
+          : `HTTP ${res.status}`;
+      throw new Error(`esocial-php ${endpoint}: ${err}`);
+    }
+    if (res.status >= 400) {
+      const err =
+        res.data && res.data.error
+          ? res.data.error
+          : `HTTP ${res.status}`;
+      throw new Error(`esocial-php ${endpoint} (${res.status}): ${err}`);
+    }
+    if (!res.data || res.data.ok !== true) {
+      const err = res.data && res.data.error ? res.data.error : 'resposta inválida';
+      throw new Error(`esocial-php ${endpoint}: ${err}`);
+    }
+    return res.data;
+  } catch (err) {
+    if (err.code === 'ECONNABORTED') {
+      throw new Error(`esocial-php ${endpoint}: timeout após ${PHP_TIMEOUT_MS}ms`);
+    }
+    if (err.response) {
+      throw new Error(
+        `esocial-php ${endpoint}: HTTP ${err.response.status} ${
+          err.response.data && err.response.data.error
+            ? err.response.data.error
+            : ''
+        }`.trim()
+      );
+    }
+    throw err;
+  }
 }
 
 // ──────────────────────────────────────────────────────────────
-// SOAP: consultarEventos
+// consultarEventos
 // ──────────────────────────────────────────────────────────────
 /**
- * Consulta identificadores de eventos no eSocial.
+ * Consulta identificadores de eventos no eSocial (via PHP microservice).
  *
- * @param {string} cnpj      CNPJ completo (14 dígitos) ou apenas a raiz (8)
- * @param {string} tpEvt     'evtAdmissao' | 'evtDeslig' | ...
- * @param {string} perApur   'YYYY-MM'
- * @returns {Promise<Array<{id: string, nrRecArqBase?: string, tpEvt: string}>>}
+ * @param {string} cnpj     CNPJ completo (14 dígitos) da empresa
+ * @param {string} tpEvt    'evtAdmissao' | 'evtDeslig' | ... OR already an 'S-2200' code
+ * @param {string} perApur  'YYYY-MM'
+ * @returns {Promise<Array<{id: string, tpEvt: string, nrRecArqBase?: string}>>}
  */
 async function consultarEventos(cnpj, tpEvt, perApur) {
   if (!cnpj) throw new Error('CNPJ obrigatório');
@@ -170,81 +182,32 @@ async function consultarEventos(cnpj, tpEvt, perApur) {
     throw new Error("perApur deve ser no formato 'YYYY-MM'");
   }
 
-  const raiz = cnpjRaiz(cnpj);
-  const endpoints = getEndpoints();
-  const agent = await getHttpsAgent();
   const cert = await getCertBuffer();
 
-  // Build the inner eSocial XML
-  const innerEsocial = `<eSocial xmlns="http://www.esocial.gov.br/schema/consulta/identificadores-eventos/empregador/v1_0_0"><consultaIdentificadoresEvts><ideEmpregador><tpInsc>1</tpInsc><nrInsc>${raiz}</nrInsc></ideEmpregador><consultaEvtsEmpregador><tpEvt>${tpEvt}</tpEvt><perApur>${perApur}</perApur></consultaEvtsEmpregador></consultaIdentificadoresEvts></eSocial>`;
-
-  // Sign the inner eSocial XML
-  const signedEsocial = signEsocialXml(innerEsocial, cert.buffer, cert.password);
-
-  const envelope =
-`<?xml version="1.0" encoding="UTF-8"?>
-<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:v1="${CONSULTA_NS}">
-  <soapenv:Header/>
-  <soapenv:Body>
-    <v1:ConsultarIdentificadoresEventosEmpregador>
-      <v1:consultaEventosEmpregador>${signedEsocial}</v1:consultaEventosEmpregador>
-    </v1:ConsultarIdentificadoresEventosEmpregador>
-  </soapenv:Body>
-</soapenv:Envelope>`;
-
-  const response = await axios.post(endpoints.consultar, envelope, {
-    httpsAgent: agent,
-    timeout: 60000,
-    headers: {
-      'Content-Type': 'text/xml; charset=utf-8',
-      SOAPAction:
-        'http://www.esocial.gov.br/servicos/empregador/consulta/identificadores-eventos/v1_0_0/ServicoConsultarIdentificadoresEventos/ConsultarIdentificadoresEventosEmpregador',
-    },
-    // Do not throw on >=400 so we can inspect the SOAP fault
-    validateStatus: () => true,
-    transformResponse: [(data) => data],
+  const data = await callPhp('/consultar-eventos', {
+    certificate: cert.buffer.toString('base64'),
+    password: cert.password,
+    cnpj: normalizeCnpj(cnpj),
+    tpEvt: toSCode(tpEvt),
+    perApur,
+    ambiente: AMBIENTE,
   });
 
-  if (response.status >= 400) {
-    throw new Error(
-      `eSocial HTTP ${response.status}: ${String(response.data).slice(0, 500)}`
-    );
-  }
-
-  const parsed = xmlParser.parse(response.data);
-
-  // SOAP fault?
-  const fault = findFirst(parsed, 'Fault');
-  if (fault) {
-    const faultstring =
-      findFirst(fault, 'faultstring') || JSON.stringify(fault).slice(0, 300);
-    throw new Error(`SOAP Fault: ${faultstring}`);
-  }
-
-  // status check
-  const status = findFirst(parsed, 'status');
-  if (status && status.cdResposta && String(status.cdResposta) !== '200') {
-    const desc = status.descResposta || `cdResposta=${status.cdResposta}`;
-    throw new Error(`eSocial status ${status.cdResposta}: ${desc}`);
-  }
-
-  // Events — the response wraps identifiers in ideEvento elements
-  const ideEventos = findAll(parsed, 'ideEvento');
-  const eventos = ideEventos.map((ev) => ({
-    id: ev.id || ev['@_id'] || ev.Id || null,
+  const eventos = Array.isArray(data.eventos) ? data.eventos : [];
+  return eventos.map((ev) => ({
+    id: ev.id,
+    // Keep the original evt* name so downstream code keeps working.
+    tpEvt,
     nrRecArqBase: ev.nrRecArqBase || null,
-    tpEvt: ev.tpEvt || tpEvt,
     hash: ev.hash || null,
-  })).filter((ev) => ev.id);
-
-  return eventos;
+  }));
 }
 
 // ──────────────────────────────────────────────────────────────
-// SOAP: downloadEvento
+// downloadEvento
 // ──────────────────────────────────────────────────────────────
 /**
- * Download a single event XML by its identifier.
+ * Download a single event by its identifier (via PHP microservice).
  *
  * @param {string} cnpj       CNPJ completo da empresa
  * @param {string} eventoId   ID do evento (S-XXXX.....)
@@ -254,140 +217,79 @@ async function downloadEvento(cnpj, eventoId) {
   if (!cnpj) throw new Error('CNPJ obrigatório');
   if (!eventoId) throw new Error('eventoId obrigatório');
 
-  const raiz = cnpjRaiz(cnpj);
-  const endpoints = getEndpoints();
-  const agent = await getHttpsAgent();
+  const cert = await getCertBuffer();
 
-  const envelope =
-`<?xml version="1.0" encoding="UTF-8"?>
-<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:dow="${DOWNLOAD_NS}">
-  <soapenv:Header/>
-  <soapenv:Body>
-    <dow:DownloadEvento>
-      <dow:solicitacaoDownloadEvento>
-        <dow:ideEmpregador>
-          <dow:tpInsc>1</dow:tpInsc>
-          <dow:nrInsc>${raiz}</dow:nrInsc>
-        </dow:ideEmpregador>
-        <dow:solicDownloadEvtsPorId>
-          <dow:id>${eventoId}</dow:id>
-        </dow:solicDownloadEvtsPorId>
-      </dow:solicitacaoDownloadEvento>
-    </dow:DownloadEvento>
-  </soapenv:Body>
-</soapenv:Envelope>`;
-
-  const response = await axios.post(endpoints.download, envelope, {
-    httpsAgent: agent,
-    timeout: 60000,
-    headers: {
-      'Content-Type': 'text/xml; charset=utf-8',
-      SOAPAction:
-        'http://www.esocial.gov.br/servicos/empregador/download/solicitacao/v1_0_0/ServicoSolicitarDownloadEventos/SolicitarDownloadEventosPorId',
-    },
-    validateStatus: () => true,
-    transformResponse: [(data) => data],
+  const data = await callPhp('/download-evento', {
+    certificate: cert.buffer.toString('base64'),
+    password: cert.password,
+    cnpj: normalizeCnpj(cnpj),
+    eventoId,
   });
 
-  if (response.status >= 400) {
-    throw new Error(
-      `eSocial HTTP ${response.status}: ${String(response.data).slice(0, 500)}`
-    );
-  }
-
-  const parsed = xmlParser.parse(response.data);
-
-  const fault = findFirst(parsed, 'Fault');
-  if (fault) {
-    const faultstring =
-      findFirst(fault, 'faultstring') || JSON.stringify(fault).slice(0, 300);
-    throw new Error(`SOAP Fault: ${faultstring}`);
-  }
-
-  // The event body is inside the <eSocial> root in the SOAP response.
-  const eSocialNode = findFirst(parsed, 'eSocial');
-  if (!eSocialNode) {
-    throw new Error('Evento não encontrado na resposta do eSocial');
-  }
-
+  const ev = data.evento || {};
+  // The PHP service already flattens the interesting fields into `dados`.
+  // We also expose them under `raw` so the extract* helpers below can keep
+  // their previous signatures.
   return {
-    id: eventoId,
-    tpEvt: detectTpEvt(eSocialNode),
-    raw: eSocialNode,
-    xml: response.data,
+    id: ev.id || eventoId,
+    tpEvt: fromPhpTpEvt(ev.tpEvt, 'desconhecido'),
+    raw: { dados: ev.dados || {}, tpEvt: ev.tpEvt || null },
+    xml: ev.xml || '',
   };
 }
 
-function detectTpEvt(eSocialNode) {
-  if (findFirst(eSocialNode, 'evtAdmissao')) return 'evtAdmissao';
-  if (findFirst(eSocialNode, 'evtDeslig')) return 'evtDeslig';
-  if (findFirst(eSocialNode, 'evtTSVInicio')) return 'evtTSVInicio';
-  if (findFirst(eSocialNode, 'evtTSVAltCadastral')) return 'evtTSVAltCadastral';
-  if (findFirst(eSocialNode, 'evtAltCadastral')) return 'evtAltCadastral';
-  return 'desconhecido';
-}
-
 // ──────────────────────────────────────────────────────────────
-// Event → funcionário mapping
+// Field extractors — now trivial because PHP already parsed everything.
+// Signatures kept identical so esocialSync.js is untouched.
 // ──────────────────────────────────────────────────────────────
 /**
- * Extract funcionário fields from a parsed evtAdmissao (S-2200) event.
+ * Extract funcionário fields from a downloaded evtAdmissao (S-2200) event.
+ *
+ * @param {{dados: object, tpEvt: string}} eventoRaw
  */
 function extractAdmissao(eventoRaw) {
-  const evt = findFirst(eventoRaw, 'evtAdmissao');
-  if (!evt) return null;
+  if (!eventoRaw || !eventoRaw.dados) return null;
+  if (eventoRaw.tpEvt && eventoRaw.tpEvt !== 'evtAdmissao') return null;
 
-  const trab = findFirst(evt, 'trabalhador') || {};
-  const vinc = findFirst(evt, 'vinculo') || {};
-  const info = findFirst(vinc, 'infoRegimeTrab') || {};
-  const infoCelet = findFirst(info, 'infoCeletista') || findFirst(vinc, 'infoCeletista') || {};
-  const trabLegal = findFirst(info, 'infoEstatutario') || {};
-
-  const cpf = findFirst(trab, 'cpfTrab') || findFirst(evt, 'cpfTrab') || null;
-  const nome = findFirst(trab, 'nmTrab') || findFirst(evt, 'nmTrab') || null;
-  const matricula = findFirst(vinc, 'matricula') || null;
-  const dataAdmissao =
-    findFirst(infoCelet, 'dtAdm') ||
-    findFirst(trabLegal, 'dtExercicio') ||
-    findFirst(vinc, 'dtAdm') ||
-    null;
-  const cargo = findFirst(vinc, 'codCargo') || findFirst(vinc, 'cargoFuncao') || null;
+  const d = eventoRaw.dados;
+  if (!d.cpf) return null;
 
   return {
-    cpf: cpf ? String(cpf).replace(/\D/g, '') : null,
-    nome: nome ? String(nome).trim() : null,
-    matricula: matricula ? String(matricula) : null,
-    dataAdmissao: dataAdmissao || null,
-    cargo: cargo ? String(cargo) : null,
+    cpf: d.cpf ? String(d.cpf).replace(/\D/g, '') : null,
+    nome: d.nome ? String(d.nome).trim() : null,
+    matricula: d.matricula ? String(d.matricula) : null,
+    dataAdmissao: d.dataAdmissao || null,
+    cargo: d.cargo ? String(d.cargo) : null,
   };
 }
 
 /**
- * Extract fields from a parsed evtDeslig (S-2299) event.
+ * Extract fields from a downloaded evtDeslig (S-2299) event.
  */
 function extractDesligamento(eventoRaw) {
-  const evt = findFirst(eventoRaw, 'evtDeslig');
-  if (!evt) return null;
+  if (!eventoRaw || !eventoRaw.dados) return null;
+  if (eventoRaw.tpEvt && eventoRaw.tpEvt !== 'evtDeslig') return null;
 
-  const ideVinc = findFirst(evt, 'ideVinculo') || {};
-  const info = findFirst(evt, 'infoDeslig') || {};
-
-  const cpf = findFirst(ideVinc, 'cpfTrab') || null;
-  const matricula = findFirst(ideVinc, 'matricula') || null;
-  const dataDesligamento = findFirst(info, 'dtDeslig') || null;
+  const d = eventoRaw.dados;
+  if (!d.cpf) return null;
 
   return {
-    cpf: cpf ? String(cpf).replace(/\D/g, '') : null,
-    matricula: matricula ? String(matricula) : null,
-    dataDesligamento: dataDesligamento || null,
+    cpf: d.cpf ? String(d.cpf).replace(/\D/g, '') : null,
+    matricula: d.matricula ? String(d.matricula) : null,
+    dataDesligamento: d.dataDesligamento || null,
   };
 }
 
 // ──────────────────────────────────────────────────────────────
-// Simple delay helper
+// Misc utilities
 // ──────────────────────────────────────────────────────────────
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getEndpoints() {
+  // Kept only for backwards compatibility with any code that imports it.
+  return { phpUrl: PHP_URL, ambiente: AMBIENTE };
 }
 
 module.exports = {
