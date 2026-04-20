@@ -166,21 +166,25 @@ async function consultarEventos(cnpj, tpEvt, perApur) {
 
   const envelope =
 `<?xml version="1.0" encoding="UTF-8"?>
-<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:con="${CONSULTA_NS}">
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:v1="${CONSULTA_NS}">
   <soapenv:Header/>
   <soapenv:Body>
-    <con:ConsultarIdentificadoresEventosEmpregador>
-      <con:consultaEventosEmpregador>
-        <con:ideEmpregador>
-          <con:tpInsc>1</con:tpInsc>
-          <con:nrInsc>${raiz}</con:nrInsc>
-        </con:ideEmpregador>
-        <con:consultaEvtsEmpregador>
-          <con:tpEvt>${tpEvt}</con:tpEvt>
-          <con:perApur>${perApur}</con:perApur>
-        </con:consultaEvtsEmpregador>
-      </con:consultaEventosEmpregador>
-    </con:ConsultarIdentificadoresEventosEmpregador>
+    <v1:ConsultarIdentificadoresEventosEmpregador>
+      <v1:consultaEventosEmpregador>
+        <eSocial xmlns="http://www.esocial.gov.br/schema/consulta/identificadores-eventos/empregador/v1_0_0">
+          <consultaIdentificadoresEvts>
+            <ideEmpregador>
+              <tpInsc>1</tpInsc>
+              <nrInsc>${raiz}</nrInsc>
+            </ideEmpregador>
+            <consultaEvtsEmpregador>
+              <tpEvt>${tpEvt}</tpEvt>
+              <perApur>${perApur}</perApur>
+            </consultaEvtsEmpregador>
+          </consultaIdentificadoresEvts>
+        </eSocial>
+      </v1:consultaEventosEmpregador>
+    </v1:ConsultarIdentificadoresEventosEmpregador>
   </soapenv:Body>
 </soapenv:Envelope>`;
 
