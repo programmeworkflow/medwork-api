@@ -1,10 +1,12 @@
 const express = require('express');
 const multer  = require('multer');
+const axios   = require('axios');
 
 const { authenticate } = require('../middleware/auth');
 const { query }        = require('../config/database');
 const {
   encryptCertificate,
+  decryptCertificate,
   parseCertificateInfo,
 } = require('../services/esocialCert');
 const { resetAgentCache } = require('../services/esocialClient');
@@ -229,6 +231,66 @@ router.delete('/empresas/:id', authenticate, requireAdminOrFinanceiro, async (re
   } catch (err) {
     console.error('[esocial/empresas/:id DELETE]', err);
     return res.status(500).json({ error: err.message });
+  }
+});
+
+// ──────────────────────────────────────────────────────────────
+// POST /api/esocial/test-login
+// Calls the Playwright microservice to verify the stored A1
+// certificate can actually authenticate against login.esocial.gov.br.
+// Requires env var ESOCIAL_PLAYWRIGHT_URL.
+// ──────────────────────────────────────────────────────────────
+router.post('/test-login', authenticate, requireAdminOrFinanceiro, async (req, res) => {
+  try {
+    const playwrightUrl = process.env.ESOCIAL_PLAYWRIGHT_URL;
+    if (!playwrightUrl) {
+      return res.status(500).json({
+        error: 'ESOCIAL_PLAYWRIGHT_URL não configurado no backend',
+      });
+    }
+
+    // Load active certificate
+    const cfg = await query(
+      `SELECT certificate_encrypted, password_encrypted, iv
+         FROM esocial_config WHERE active = true LIMIT 1`
+    );
+    if (!cfg.rows.length) {
+      return res.status(422).json({
+        error: 'Nenhum certificado ativo configurado. Faça upload do certificado A1 antes de testar.',
+      });
+    }
+
+    const { certificate_encrypted, password_encrypted, iv } = cfg.rows[0];
+
+    let certificate, password;
+    try {
+      const dec = decryptCertificate(certificate_encrypted, password_encrypted, iv);
+      certificate = dec.certificate;
+      password = dec.password;
+    } catch (err) {
+      return res.status(500).json({ error: `Falha ao descriptografar certificado: ${err.message}` });
+    }
+
+    // Call the Playwright service
+    const url = playwrightUrl.replace(/\/+$/, '') + '/login-test';
+    const resp = await axios.post(
+      url,
+      {
+        certificate: certificate.toString('base64'),
+        password,
+      },
+      {
+        timeout: 90_000, // login flow budget + network
+        validateStatus: () => true, // we propagate the error ourselves
+      }
+    );
+
+    return res.status(resp.status || 200).json(resp.data);
+  } catch (err) {
+    console.error('[esocial/test-login]', err);
+    return res.status(500).json({
+      error: err.message || 'Erro ao testar login no eSocial via Playwright',
+    });
   }
 });
 
