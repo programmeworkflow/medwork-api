@@ -295,6 +295,64 @@ router.post('/test-login', authenticate, requireAdminOrFinanceiro, async (req, r
 });
 
 // ──────────────────────────────────────────────────────────────
+// POST /api/esocial/sst/funcionarios
+// Calls the Playwright microservice to list active workers of a
+// given CNPJ via the eSocial SST portal (Procurador de PJ flow).
+// Body: { cnpj, cpfList? }
+// ──────────────────────────────────────────────────────────────
+router.post('/sst/funcionarios', authenticate, requireAdminOrFinanceiro, async (req, res) => {
+  const { cnpj, cpfList } = req.body || {};
+  if (!cnpj) return res.status(400).json({ error: 'cnpj é obrigatório' });
+
+  const playwrightUrl = process.env.ESOCIAL_PLAYWRIGHT_URL;
+  if (!playwrightUrl) {
+    return res.status(500).json({ error: 'ESOCIAL_PLAYWRIGHT_URL não configurado' });
+  }
+
+  try {
+    const cfg = await query(
+      `SELECT certificate_encrypted, password_encrypted, iv
+         FROM esocial_config
+        WHERE active = true
+        ORDER BY uploaded_at DESC
+        LIMIT 1`
+    );
+    if (!cfg.rows.length) {
+      return res.status(422).json({ error: 'Nenhum certificado ativo configurado' });
+    }
+
+    const { certificate_encrypted, password_encrypted, iv } = cfg.rows[0];
+    let certificate, password;
+    try {
+      const dec = decryptCertificate(certificate_encrypted, password_encrypted, iv);
+      certificate = dec.certificate;
+      password = dec.password;
+    } catch (err) {
+      return res.status(500).json({ error: `Falha ao descriptografar certificado: ${err.message}` });
+    }
+
+    const url = playwrightUrl.replace(/\/+$/, '') + '/fetch-funcionarios';
+    const resp = await axios.post(
+      url,
+      {
+        certificate: certificate.toString('base64'),
+        password,
+        cnpj: String(cnpj).replace(/\D/g, ''),
+        cpfList: Array.isArray(cpfList) ? cpfList : undefined,
+      },
+      {
+        timeout: 10 * 60_000,
+        validateStatus: () => true,
+      }
+    );
+    return res.status(resp.status || 200).json(resp.data);
+  } catch (err) {
+    console.error('[esocial/sst/funcionarios]', err);
+    return res.status(500).json({ error: err.message || 'Erro ao consultar funcionários via Playwright' });
+  }
+});
+
+// ──────────────────────────────────────────────────────────────
 // POST /api/esocial/sync/:empresaId
 // Triggers an immediate sync for one empresa. Returns the summary.
 // ──────────────────────────────────────────────────────────────
